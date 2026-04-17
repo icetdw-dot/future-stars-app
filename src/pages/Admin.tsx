@@ -36,12 +36,13 @@ function cn(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(" ");
 }
 
-const ADMIN_SESSION_KEY = "fs_admin_ok_v1";
+type AdminUserRow = { user_id: string };
 
 export default function Admin() {
-  const envPassword = import.meta.env.VITE_ADMIN_PASSWORD;
-
-  const [isUnlocked, setIsUnlocked] = useState(false);
+  const [authBusy, setAuthBusy] = useState(true);
+  const [userEmail, setUserEmail] = useState<string | null>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
 
   const [busy, setBusy] = useState(false);
@@ -60,8 +61,61 @@ export default function Admin() {
   const [createMatchGroup, setCreateMatchGroup] = useState<string>("");
 
   useEffect(() => {
-    const ok = localStorage.getItem(ADMIN_SESSION_KEY) === "1";
-    if (ok) setIsUnlocked(true);
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data } = await supabase.auth.getSession();
+        const session = data.session;
+        if (cancelled) return;
+        if (!session?.user) {
+          setUserEmail(null);
+          setIsAdmin(false);
+          setAuthBusy(false);
+          return;
+        }
+        setUserEmail(session.user.email ?? null);
+
+        const { data: adminRow, error: adminErr } = await supabase
+          .from("admin_users")
+          .select("user_id")
+          .eq("user_id", session.user.id)
+          .maybeSingle<AdminUserRow>();
+        if (adminErr) throw adminErr;
+        setIsAdmin(!!adminRow);
+      } catch (e: any) {
+        setError(e?.message ?? "Failed to initialize auth.");
+        setUserEmail(null);
+        setIsAdmin(false);
+      } finally {
+        if (!cancelled) setAuthBusy(false);
+      }
+    })();
+
+    const { data: sub } = supabase.auth.onAuthStateChange(async (_evt, session) => {
+      if (cancelled) return;
+      setError(null);
+      if (!session?.user) {
+        setUserEmail(null);
+        setIsAdmin(false);
+        return;
+      }
+      setUserEmail(session.user.email ?? null);
+      try {
+        const { data: adminRow } = await supabase
+          .from("admin_users")
+          .select("user_id")
+          .eq("user_id", session.user.id)
+          .maybeSingle<AdminUserRow>();
+        setIsAdmin(!!adminRow);
+      } catch {
+        setIsAdmin(false);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+      sub.subscription.unsubscribe();
+    };
   }, []);
 
   useEffect(() => {
@@ -130,23 +184,40 @@ export default function Admin() {
   }
 
   useEffect(() => {
-    if (!isUnlocked) return;
+    if (!isAdmin) return;
     void loadAll();
-  }, [isUnlocked]);
+  }, [isAdmin]);
 
-  async function unlock() {
+  async function signIn() {
     setError(null);
-    if (!envPassword || envPassword === "CHANGE_ME") {
-      setError("Admin password is not set. Please set VITE_ADMIN_PASSWORD in .env and restart dev server.");
-      return;
+    setBusy(true);
+    try {
+      const { error: signInErr } = await supabase.auth.signInWithPassword({
+        email: email.trim(),
+        password,
+      });
+      if (signInErr) throw signInErr;
+      setPassword("");
+      setToast("Signed in.");
+    } catch (e: any) {
+      setError(e?.message ?? "Sign in failed.");
+    } finally {
+      setBusy(false);
     }
-    if (password !== envPassword) {
-      setError("Wrong password.");
-      return;
+  }
+
+  async function signOut() {
+    setError(null);
+    setBusy(true);
+    try {
+      const { error: outErr } = await supabase.auth.signOut();
+      if (outErr) throw outErr;
+      setToast("Signed out.");
+    } catch (e: any) {
+      setError(e?.message ?? "Sign out failed.");
+    } finally {
+      setBusy(false);
     }
-    localStorage.setItem(ADMIN_SESSION_KEY, "1");
-    setIsUnlocked(true);
-    setPassword("");
   }
 
   function sanitizeFileName(name: string) {
@@ -293,33 +364,82 @@ export default function Admin() {
     }
   }
 
-  if (!isUnlocked) {
+  if (authBusy) {
     return (
       <div className="min-h-screen bg-surface px-6 py-24">
         <div className="max-w-md mx-auto bg-surface-container-low border border-outline-variant/10 rounded-[32px] p-10 shadow-2xl">
-          <h1 className="text-3xl font-headline font-bold text-on-background mb-2">Admin Access</h1>
-          <p className="text-on-surface-variant mb-8">Enter the admin password to continue.</p>
+          <h1 className="text-3xl font-headline font-bold text-on-background mb-2">Admin</h1>
+          <p className="text-on-surface-variant">Loading…</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!userEmail) {
+    return (
+      <div className="min-h-screen bg-surface px-6 py-24">
+        <div className="max-w-md mx-auto bg-surface-container-low border border-outline-variant/10 rounded-[32px] p-10 shadow-2xl">
+          <h1 className="text-3xl font-headline font-bold text-on-background mb-2">Admin Sign In</h1>
+          <p className="text-on-surface-variant mb-8">Sign in with your admin account.</p>
 
           {error ? (
             <div className="bg-red-500/10 border border-red-500/20 text-red-200 rounded-2xl px-5 py-4 mb-6">
-              <p className="font-bold mb-1">Access denied</p>
+              <p className="font-bold mb-1">Error</p>
               <p className="text-sm opacity-90">{error}</p>
             </div>
           ) : null}
 
           <input
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            placeholder="Email"
+            className="w-full bg-surface-container-lowest border border-outline-variant/20 rounded-2xl px-5 py-4 text-on-background focus:border-primary outline-none transition-all"
+          />
+          <input
             type="password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             placeholder="Password"
-            className="w-full bg-surface-container-lowest border border-outline-variant/20 rounded-2xl px-5 py-4 text-on-background focus:border-primary outline-none transition-all"
+            className="mt-4 w-full bg-surface-container-lowest border border-outline-variant/20 rounded-2xl px-5 py-4 text-on-background focus:border-primary outline-none transition-all"
           />
           <button
             type="button"
-            onClick={unlock}
-            className="mt-6 w-full bg-primary text-on-primary font-headline font-bold py-4 rounded-2xl hover:brightness-110 transition-all"
+            onClick={() => void signIn()}
+            disabled={busy}
+            className={cn(
+              "mt-6 w-full bg-primary text-on-primary font-headline font-bold py-4 rounded-2xl transition-all",
+              busy ? "opacity-70 cursor-not-allowed" : "hover:brightness-110"
+            )}
           >
-            Unlock
+            Sign In
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (!isAdmin) {
+    return (
+      <div className="min-h-screen bg-surface px-6 py-24">
+        <div className="max-w-md mx-auto bg-surface-container-low border border-outline-variant/10 rounded-[32px] p-10 shadow-2xl">
+          <h1 className="text-3xl font-headline font-bold text-on-background mb-2">Admin</h1>
+          <p className="text-on-surface-variant mb-8">
+            Signed in as <span className="font-bold text-on-background">{userEmail}</span>, but this account is not an
+            admin.
+          </p>
+          {error ? (
+            <div className="bg-red-500/10 border border-red-500/20 text-red-200 rounded-2xl px-5 py-4 mb-6">
+              <p className="font-bold mb-1">Error</p>
+              <p className="text-sm opacity-90">{error}</p>
+            </div>
+          ) : null}
+          <button
+            type="button"
+            onClick={() => void signOut()}
+            className="w-full bg-primary/10 text-primary font-headline font-bold py-4 rounded-2xl hover:bg-primary/15 transition-all"
+          >
+            Sign Out
           </button>
         </div>
       </div>
@@ -351,12 +471,11 @@ export default function Admin() {
             <button
               type="button"
               onClick={() => {
-                localStorage.removeItem(ADMIN_SESSION_KEY);
-                setIsUnlocked(false);
+                void signOut();
               }}
               className="bg-primary/10 text-primary font-headline font-bold px-5 py-3 rounded-full hover:bg-primary/15 transition-all"
             >
-              Lock
+              Sign out
             </button>
           </div>
         </div>

@@ -40,6 +40,7 @@ function cn(...classes: Array<string | false | null | undefined>) {
 }
 
 type AdminUserRow = { user_id: string };
+const AUTH_TIMEOUT_MS = 5000;
 
 export default function Admin() {
   const [authBusy, setAuthBusy] = useState(true);
@@ -68,19 +69,19 @@ export default function Admin() {
   const [createMatchAIc, setCreateMatchAIc] = useState<string>("");
   const [createMatchBIc, setCreateMatchBIc] = useState<string>("");
 
+  const withTimeout = async <T,>(p: Promise<T>, ms: number, label: string): Promise<T> => {
+    return await Promise.race([
+      p,
+      new Promise<T>((_, reject) => setTimeout(() => reject(new Error(`${label} timed out`)), ms)),
+    ]);
+  };
+
   useEffect(() => {
     let cancelled = false;
-    const withTimeout = async <T,>(p: Promise<T>, ms: number, label: string): Promise<T> => {
-      return await Promise.race([
-        p,
-        new Promise<T>((_, reject) => setTimeout(() => reject(new Error(`${label} timed out`)), ms)),
-      ]);
-    };
-
     (async () => {
       try {
         // Ensure we never hang on "Loading…" forever in production.
-        const { data } = await withTimeout(supabase.auth.getSession(), 5000, "Auth init");
+        const { data } = await withTimeout(supabase.auth.getSession(), AUTH_TIMEOUT_MS, "Auth init");
         const session = data.session;
         if (cancelled) return;
         if (!session?.user) {
@@ -93,7 +94,7 @@ export default function Admin() {
 
         const { data: adminRow, error: adminErr } = await withTimeout(
           supabase.from("admin_users").select("user_id").eq("user_id", session.user.id).maybeSingle(),
-          5000,
+          AUTH_TIMEOUT_MS,
           "Admin check"
         );
         if (adminErr) throw adminErr;
@@ -228,11 +229,21 @@ export default function Admin() {
     setError(null);
     setBusy(true);
     try {
-      const { error: outErr } = await supabase.auth.signOut();
+      const { error: outErr } = await withTimeout(
+        supabase.auth.signOut({ scope: "local" }),
+        AUTH_TIMEOUT_MS,
+        "Sign out"
+      );
       if (outErr) throw outErr;
+      // Make UI deterministic even if auth event callback is delayed.
+      setUserEmail(null);
+      setIsAdmin(false);
       setToast("Signed out.");
     } catch (e: any) {
-      setError(e?.message ?? "Sign out failed.");
+      // Fallback: force local state reset so user can continue.
+      setUserEmail(null);
+      setIsAdmin(false);
+      setError((e?.message ?? "Sign out failed.") + " (local session cleared)");
     } finally {
       setBusy(false);
     }

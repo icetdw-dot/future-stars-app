@@ -8,6 +8,9 @@ interface HeroProps {
 
 export default function Hero({ onRegisterClick }: HeroProps) {
   const [championPhotoUrl, setChampionPhotoUrl] = useState<string | null>(null);
+  const [tournamentName, setTournamentName] = useState<string | null>(null);
+  const [tournamentDate, setTournamentDate] = useState<string | null>(null);
+  const [tournamentLocation, setTournamentLocation] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -15,15 +18,24 @@ export default function Hero({ onRegisterClick }: HeroProps) {
       try {
         const { data, error } = await supabase
           .from("site_config")
-          .select("champion_photo_url, created_at")
-          .order("created_at", { ascending: false })
-          .limit(1)
+          .select("champion_photo_url, tournament_name, tournament_date, tournament_location")
+          .eq("id", "00000000-0000-0000-0000-000000000001")
           .maybeSingle();
         if (error) throw error;
         const url = (data as any)?.champion_photo_url ?? null;
-        if (!cancelled) setChampionPhotoUrl(url);
+        if (!cancelled) {
+          setChampionPhotoUrl(url);
+          setTournamentName((data as any)?.tournament_name ?? null);
+          setTournamentDate((data as any)?.tournament_date ?? null);
+          setTournamentLocation((data as any)?.tournament_location ?? null);
+        }
       } catch {
-        if (!cancelled) setChampionPhotoUrl(null);
+        if (!cancelled) {
+          setChampionPhotoUrl(null);
+          setTournamentName(null);
+          setTournamentDate(null);
+          setTournamentLocation(null);
+        }
       }
     })();
     return () => {
@@ -41,13 +53,15 @@ export default function Hero({ onRegisterClick }: HeroProps) {
           className="lg:col-span-7 z-10"
         >
           <span className="inline-block py-1 px-4 rounded-full bg-primary/10 text-primary font-body text-[10px] uppercase tracking-widest font-semibold mb-6 border border-primary/20">
-            Summer Invitational 2024
+            {tournamentName ?? "Future Stars Tournament"}
           </span>
           <h1 className="text-5xl md:text-7xl lg:text-8xl font-headline font-extrabold text-on-background leading-[1.1] mb-8 tracking-tighter">
             CHASING <span className="text-transparent bg-clip-text bg-gradient-to-br from-primary to-primary-container">GLORY</span>
           </h1>
           <p className="text-on-surface-variant text-lg md:text-xl max-w-2xl mb-10 leading-relaxed font-body">
-            Join the most prestigious community badminton tournament of the season. Where precision meets power, and future legends are born on the court.
+            {tournamentDate || tournamentLocation
+              ? `Date: ${tournamentDate ?? "-"} · Location: ${tournamentLocation ?? "-"}`
+              : "Join the tournament. Where precision meets power, and future legends are born on the court."}
           </p>
 
           <div className="flex flex-col sm:flex-row items-center gap-8 bg-surface-container-low p-8 rounded-3xl md:rounded-full border border-outline-variant/15 shadow-xl">

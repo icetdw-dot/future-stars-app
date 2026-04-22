@@ -3,6 +3,9 @@ import { supabase } from "../lib/supabase";
 
 type SiteConfigRow = {
   id: string;
+  tournament_name: string | null;
+  tournament_date: string | null;
+  tournament_location: string | null;
   champion_photo_url: string | null;
   tng_qr_code_url: string | null;
   created_at: string;
@@ -52,6 +55,9 @@ export default function Admin() {
   const [siteConfig, setSiteConfig] = useState<SiteConfigRow | null>(null);
   const [championFile, setChampionFile] = useState<File | null>(null);
   const [tngQrFile, setTngQrFile] = useState<File | null>(null);
+  const [tournamentName, setTournamentName] = useState("");
+  const [tournamentDate, setTournamentDate] = useState("");
+  const [tournamentLocation, setTournamentLocation] = useState("");
 
   const [registrations, setRegistrations] = useState<RegistrationRow[]>([]);
   const [matches, setMatches] = useState<(MatchRow & { player_a_name?: string; player_b_name?: string })[]>([]);
@@ -59,6 +65,8 @@ export default function Admin() {
   const [createMatchA, setCreateMatchA] = useState<string>("");
   const [createMatchB, setCreateMatchB] = useState<string>("");
   const [createMatchGroup, setCreateMatchGroup] = useState<string>("");
+  const [createMatchAIc, setCreateMatchAIc] = useState<string>("");
+  const [createMatchBIc, setCreateMatchBIc] = useState<string>("");
 
   useEffect(() => {
     let cancelled = false;
@@ -138,12 +146,14 @@ export default function Admin() {
     try {
       const { data: cfg, error: cfgErr } = await supabase
         .from("site_config")
-        .select("id, champion_photo_url, tng_qr_code_url, created_at")
-        .order("created_at", { ascending: false })
-        .limit(1)
+        .select("id, tournament_name, tournament_date, tournament_location, champion_photo_url, tng_qr_code_url, created_at")
+        .eq("id", "00000000-0000-0000-0000-000000000001")
         .maybeSingle();
       if (cfgErr) throw cfgErr;
       setSiteConfig((cfg as any) ?? null);
+      setTournamentName(((cfg as any)?.tournament_name ?? "") as string);
+      setTournamentDate(((cfg as any)?.tournament_date ?? "") as string);
+      setTournamentLocation(((cfg as any)?.tournament_location ?? "") as string);
 
       const { data: regs, error: regsErr } = await supabase
         .from("registrations")
@@ -239,7 +249,13 @@ export default function Admin() {
     setError(null);
     setBusy(true);
     try {
-      const updates: { champion_photo_url?: string | null; tng_qr_code_url?: string | null } = {};
+      const updates: {
+        tournament_name?: string | null;
+        tournament_date?: string | null;
+        tournament_location?: string | null;
+        champion_photo_url?: string | null;
+        tng_qr_code_url?: string | null;
+      } = {};
 
       if (championFile) {
         const url = await uploadPublicAsset(
@@ -254,18 +270,24 @@ export default function Admin() {
         updates.tng_qr_code_url = url;
       }
 
-      if (!updates.champion_photo_url && !updates.tng_qr_code_url) {
-        setToast("No changes to save.");
-        return;
-      }
+      updates.tournament_name = tournamentName.trim() || null;
+      updates.tournament_date = tournamentDate.trim() || null;
+      updates.tournament_location = tournamentLocation.trim() || null;
 
       const { data: up, error: upErr } = await supabase
         .from("site_config")
-        .insert({
-          champion_photo_url: updates.champion_photo_url ?? siteConfig?.champion_photo_url ?? null,
-          tng_qr_code_url: updates.tng_qr_code_url ?? siteConfig?.tng_qr_code_url ?? null,
-        })
-        .select("id, champion_photo_url, tng_qr_code_url, created_at")
+        .upsert(
+          {
+            id: "00000000-0000-0000-0000-000000000001",
+            tournament_name: updates.tournament_name,
+            tournament_date: updates.tournament_date,
+            tournament_location: updates.tournament_location,
+            champion_photo_url: updates.champion_photo_url ?? siteConfig?.champion_photo_url ?? null,
+            tng_qr_code_url: updates.tng_qr_code_url ?? siteConfig?.tng_qr_code_url ?? null,
+          },
+          { onConflict: "id" }
+        )
+        .select("id, tournament_name, tournament_date, tournament_location, champion_photo_url, tng_qr_code_url, created_at")
         .single();
 
       if (upErr) throw upErr;
@@ -297,11 +319,34 @@ export default function Admin() {
 
   async function createMatch() {
     setError(null);
-    if (!createMatchA || !createMatchB || createMatchA === createMatchB) {
-      setError("Please choose two different players.");
+    const resolveId = async (inputId: string, inputIc: string) => {
+      const trimmedIc = inputIc.trim();
+      if (trimmedIc) {
+        const { data, error } = await supabase
+          .from("registrations")
+          .select("id")
+          .eq("ic_number", trimmedIc)
+          .maybeSingle<{ id: string }>();
+        if (error) throw error;
+        if (!data?.id) throw new Error(`No registration found for IC: ${trimmedIc}`);
+        return data.id;
+      }
+      return inputId;
+    };
+
+    const aId = await resolveId(createMatchA, createMatchAIc);
+    const bId = await resolveId(createMatchB, createMatchBIc);
+
+    if (!aId || !bId || aId === bId) {
+      setError("Please choose two different players (or provide two different IC numbers).");
       return;
     }
-    const group = createMatchGroup || registrationOptions.find((r) => r.id === createMatchA)?.group || "";
+
+    const group =
+      createMatchGroup ||
+      registrationOptions.find((r) => r.id === aId)?.group ||
+      registrationOptions.find((r) => r.id === bId)?.group ||
+      "";
     if (!group) {
       setError("Please choose a group.");
       return;
@@ -312,8 +357,8 @@ export default function Admin() {
         .from("matches")
         .insert({
           group_name: group,
-          player_a_registration_id: createMatchA,
-          player_b_registration_id: createMatchB,
+          player_a_registration_id: aId,
+          player_b_registration_id: bId,
           match_status: "scheduled",
           score_a: 0,
           score_b: 0,
@@ -341,6 +386,8 @@ export default function Admin() {
       setCreateMatchA("");
       setCreateMatchB("");
       setCreateMatchGroup("");
+      setCreateMatchAIc("");
+      setCreateMatchBIc("");
       setToast("Match created.");
     } catch (e: any) {
       setError(e?.message ?? "Failed to create match.");
@@ -496,6 +543,35 @@ export default function Admin() {
         {/* Site Config */}
         <section className="bg-surface-container-low border border-outline-variant/10 rounded-[32px] p-8 mb-10">
           <h2 className="text-2xl font-headline font-bold text-on-background mb-6">Site Config</h2>
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-8">
+            <div>
+              <p className="text-xs font-bold text-on-surface-variant uppercase tracking-wider mb-2">Tournament Name</p>
+              <input
+                value={tournamentName}
+                onChange={(e) => setTournamentName(e.target.value)}
+                placeholder="e.g. Future Stars 2026"
+                className="w-full bg-surface-container-lowest border border-outline-variant/20 rounded-2xl px-4 py-3 text-on-background focus:border-primary outline-none transition-all"
+              />
+            </div>
+            <div>
+              <p className="text-xs font-bold text-on-surface-variant uppercase tracking-wider mb-2">Date</p>
+              <input
+                value={tournamentDate}
+                onChange={(e) => setTournamentDate(e.target.value)}
+                placeholder="e.g. 2026-05-18"
+                className="w-full bg-surface-container-lowest border border-outline-variant/20 rounded-2xl px-4 py-3 text-on-background focus:border-primary outline-none transition-all"
+              />
+            </div>
+            <div>
+              <p className="text-xs font-bold text-on-surface-variant uppercase tracking-wider mb-2">Location</p>
+              <input
+                value={tournamentLocation}
+                onChange={(e) => setTournamentLocation(e.target.value)}
+                placeholder="e.g. KL Sports Arena"
+                className="w-full bg-surface-container-lowest border border-outline-variant/20 rounded-2xl px-4 py-3 text-on-background focus:border-primary outline-none transition-all"
+              />
+            </div>
+          </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
             <div>
               <p className="text-xs font-bold text-on-surface-variant uppercase tracking-wider mb-2">
@@ -565,6 +641,12 @@ export default function Admin() {
               <label className="block text-xs font-bold text-on-surface-variant uppercase tracking-wider mb-2">
                 Player A
               </label>
+              <input
+                value={createMatchAIc}
+                onChange={(e) => setCreateMatchAIc(e.target.value)}
+                placeholder="(Optional) Enter Player A IC to search"
+                className="mb-3 w-full bg-surface-container-lowest border border-outline-variant/20 rounded-2xl px-4 py-3 text-on-background focus:border-primary outline-none transition-all"
+              />
               <select
                 value={createMatchA}
                 onChange={(e) => {
@@ -587,6 +669,12 @@ export default function Admin() {
               <label className="block text-xs font-bold text-on-surface-variant uppercase tracking-wider mb-2">
                 Player B
               </label>
+              <input
+                value={createMatchBIc}
+                onChange={(e) => setCreateMatchBIc(e.target.value)}
+                placeholder="(Optional) Enter Player B IC to search"
+                className="mb-3 w-full bg-surface-container-lowest border border-outline-variant/20 rounded-2xl px-4 py-3 text-on-background focus:border-primary outline-none transition-all"
+              />
               <select
                 value={createMatchB}
                 onChange={(e) => setCreateMatchB(e.target.value)}
@@ -607,7 +695,7 @@ export default function Admin() {
               <input
                 value={createMatchGroup}
                 onChange={(e) => setCreateMatchGroup(e.target.value)}
-                placeholder="e.g. U14 Boys Double"
+                placeholder="e.g. U14 Mens Double"
                 className="w-full bg-surface-container-lowest border border-outline-variant/20 rounded-2xl px-4 py-3 text-on-background focus:border-primary outline-none transition-all"
               />
             </div>
@@ -666,31 +754,48 @@ export default function Admin() {
                       />
                     </div>
 
-                    <select
-                      value={m.match_status}
-                      onChange={(e) =>
-                        setMatches((prev) =>
-                          prev.map((x) => (x.id === m.id ? { ...x, match_status: e.target.value as any } : x))
-                        )
-                      }
-                      className="bg-surface border border-outline-variant/20 rounded-xl px-3 py-2 text-on-background focus:border-primary outline-none transition-all"
-                    >
-                      <option value="scheduled">scheduled</option>
-                      <option value="in_progress">in_progress</option>
-                      <option value="finished">finished</option>
-                      <option value="cancelled">cancelled</option>
-                    </select>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => void updateMatch(m.id, { match_status: "in_progress" })}
+                        disabled={busy || m.match_status === "in_progress"}
+                        className={cn(
+                          "bg-primary/10 text-primary font-headline font-bold px-4 py-2 rounded-full transition-all",
+                          busy ? "opacity-70 cursor-not-allowed" : "hover:bg-primary/15",
+                          m.match_status === "in_progress" && "opacity-60"
+                        )}
+                      >
+                        Start
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void updateMatch(m.id, { match_status: "finished" })}
+                        disabled={busy || m.match_status === "finished"}
+                        className={cn(
+                          "bg-green-500/10 text-green-300 font-headline font-bold px-4 py-2 rounded-full transition-all border border-green-500/10",
+                          busy ? "opacity-70 cursor-not-allowed" : "hover:bg-green-500/15",
+                          m.match_status === "finished" && "opacity-60"
+                        )}
+                      >
+                        End
+                      </button>
+                    </div>
 
                     <button
                       type="button"
-                      onClick={() => void updateMatch(m.id, { score_a: m.score_a ?? 0, score_b: m.score_b ?? 0, match_status: m.match_status })}
+                      onClick={() =>
+                        void updateMatch(m.id, {
+                          score_a: m.score_a ?? 0,
+                          score_b: m.score_b ?? 0,
+                        })
+                      }
                       disabled={busy}
                       className={cn(
                         "bg-primary/10 text-primary font-headline font-bold px-5 py-2 rounded-full transition-all",
                         busy ? "opacity-70 cursor-not-allowed" : "hover:bg-primary/15"
                       )}
                     >
-                      Save
+                      Save Score
                     </button>
                   </div>
                 </div>

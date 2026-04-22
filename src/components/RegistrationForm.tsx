@@ -51,9 +51,8 @@ export default function RegistrationForm() {
       try {
         const { data, error } = await supabase
           .from("site_config")
-          .select("tng_qr_code_url, created_at")
-          .order("created_at", { ascending: false })
-          .limit(1)
+          .select("tng_qr_code_url")
+          .eq("id", "00000000-0000-0000-0000-000000000001")
           .maybeSingle();
         if (error) throw error;
         if (!cancelled) setTngQrUrl((data as any)?.tng_qr_code_url ?? null);
@@ -137,7 +136,16 @@ export default function RegistrationForm() {
       setIsSubmitted(true);
       resetForm();
     } catch (err: any) {
-      setSubmitError(err?.message ?? "Submission failed. Please try again.");
+      const msg = String(err?.message ?? "");
+      if (msg.includes("duplicate key value") || msg.includes("registrations_ic_number_unique")) {
+        setSubmitError("This IC number has already been registered. Please use a different IC or contact the organizer.");
+      } else if (msg.toLowerCase().includes("row-level security") || msg.toLowerCase().includes("permission")) {
+        setSubmitError(
+          "Upload/submit permission denied. Please contact admin to enable Storage insert policy for `receipts` or registrations insert policy."
+        );
+      } else {
+        setSubmitError(msg || "Submission failed. Please try again.");
+      }
     } finally {
       setIsSubmitting(false);
     }

@@ -70,9 +70,17 @@ export default function Admin() {
 
   useEffect(() => {
     let cancelled = false;
+    const withTimeout = async <T,>(p: Promise<T>, ms: number, label: string): Promise<T> => {
+      return await Promise.race([
+        p,
+        new Promise<T>((_, reject) => setTimeout(() => reject(new Error(`${label} timed out`)), ms)),
+      ]);
+    };
+
     (async () => {
       try {
-        const { data } = await supabase.auth.getSession();
+        // Ensure we never hang on "Loading…" forever in production.
+        const { data } = await withTimeout(supabase.auth.getSession(), 5000, "Auth init");
         const session = data.session;
         if (cancelled) return;
         if (!session?.user) {
@@ -83,11 +91,11 @@ export default function Admin() {
         }
         setUserEmail(session.user.email ?? null);
 
-        const { data: adminRow, error: adminErr } = await supabase
-          .from("admin_users")
-          .select("user_id")
-          .eq("user_id", session.user.id)
-          .maybeSingle<AdminUserRow>();
+        const { data: adminRow, error: adminErr } = await withTimeout(
+          supabase.from("admin_users").select("user_id").eq("user_id", session.user.id).maybeSingle(),
+          5000,
+          "Admin check"
+        );
         if (adminErr) throw adminErr;
         setIsAdmin(!!adminRow);
       } catch (e: any) {
@@ -113,7 +121,7 @@ export default function Admin() {
           .from("admin_users")
           .select("user_id")
           .eq("user_id", session.user.id)
-          .maybeSingle<AdminUserRow>();
+          .maybeSingle();
         setIsAdmin(!!adminRow);
       } catch {
         setIsAdmin(false);
@@ -417,6 +425,12 @@ export default function Admin() {
         <div className="max-w-md mx-auto bg-surface-container-low border border-outline-variant/10 rounded-[32px] p-10 shadow-2xl">
           <h1 className="text-3xl font-headline font-bold text-on-background mb-2">Admin</h1>
           <p className="text-on-surface-variant">Loading…</p>
+          {error ? (
+            <div className="mt-6 bg-red-500/10 border border-red-500/20 text-red-200 rounded-2xl px-5 py-4">
+              <p className="font-bold mb-1">Auth error</p>
+              <p className="text-sm opacity-90">{error}</p>
+            </div>
+          ) : null}
         </div>
       </div>
     );

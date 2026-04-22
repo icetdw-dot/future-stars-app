@@ -39,7 +39,6 @@ function cn(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(" ");
 }
 
-type AdminUserRow = { user_id: string };
 const AUTH_TIMEOUT_MS = 5000;
 
 export default function Admin() {
@@ -93,12 +92,12 @@ export default function Admin() {
         setUserEmail(session.user.email ?? null);
 
         const { data: adminRow, error: adminErr } = await withTimeout(
-          supabase.from("admin_users").select("user_id").eq("user_id", session.user.id).maybeSingle(),
+          supabase.rpc("is_current_user_admin"),
           AUTH_TIMEOUT_MS,
           "Admin check"
         );
         if (adminErr) throw adminErr;
-        setIsAdmin(!!adminRow);
+        setIsAdmin(Boolean(adminRow));
       } catch (e: any) {
         setError(e?.message ?? "Failed to initialize auth.");
         setUserEmail(null);
@@ -118,12 +117,8 @@ export default function Admin() {
       }
       setUserEmail(session.user.email ?? null);
       try {
-        const { data: adminRow } = await supabase
-          .from("admin_users")
-          .select("user_id")
-          .eq("user_id", session.user.id)
-          .maybeSingle();
-        setIsAdmin(!!adminRow);
+        const { data: adminRow } = await supabase.rpc("is_current_user_admin");
+        setIsAdmin(Boolean(adminRow));
       } catch {
         setIsAdmin(false);
       }
